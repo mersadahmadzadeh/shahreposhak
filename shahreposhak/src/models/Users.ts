@@ -6,7 +6,7 @@ export interface IUser extends Document {
   name: string;
   email: string;
   password: string;
-  role: "user" | "admin" , default: "user";
+  role: "user" | "admin" ;
   comparePassword(candidatePassword: string): Promise<boolean>;
 
 }

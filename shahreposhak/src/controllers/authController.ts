@@ -6,8 +6,12 @@ import TokenBlackList from "../models/TokenBlackList.ts";
 import { access } from "fs";
 import { token } from "morgan";
 
-dotenv.config();
-
+dotenv.config({path: ".env"});
+ 
+if(!process.env.JWT_SECRET || !process.env.JWT_REFRESH_SECRET) {
+  throw new Error("JWT secrets are not defined in the environment variables");
+}
+ 
 // تابع کمکی برای ساخت جفت توکن‌ها
 const generateTokens = (userId: string) => {
   const accessToken = jwt.sign({ id: userId }, process.env.JWT_SECRET!, {
@@ -92,42 +96,42 @@ export const login = async (req: Request, res: Response): Promise<void> => {
   }
 };
 // تغییر رمز عبور
-export const changePassword = async (
-  req: Request,
-  res: Response
-): Promise<void> => {
-  try {
-    const { currentPassword, newPassword } = req.body;
+  export const changePassword = async (
+    req: Request,
+    res: Response
+  ): Promise<void> => {
+    try {
+      const { currentPassword, newPassword } = req.body;
+    
+      // استخراج userId از توکن JWT
+      const userId = (req as any).user?.id;
+      if (!userId) {
+        res.status(401).json({ message: "کاربر احراز هویت نشده." });
+        return;
+      }
 
-    // استخراج userId از توکن JWT
-    const userId = (req as any).user?.id;
-    if (!userId) {
-      res.status(401).json({ message: "کاربر احراز هویت نشده." });
-      return;
+      const user = await User.findById(userId);
+      if (!user) {
+        res.status(404).json({ message: "کاربر پیدا نشد." });
+        return;
+      }
+
+      // بررسی رمز فعلی
+      const isMatch = await user.comparePassword(currentPassword);
+      if (!isMatch) {
+        res.status(400).json({ message: "رمز فعلی اشتباه است." });
+        return;
+      }
+
+      // تنظیم و هش رمز جدید
+      user.password = newPassword;
+      await user.save();
+
+      res.status(200).json({ message: "رمز عبور با موفقیت تغییر کرد." });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
-
-    const user = await User.findById(userId);
-    if (!user) {
-      res.status(404).json({ message: "کاربر پیدا نشد." });
-      return;
-    }
-
-    // بررسی رمز فعلی
-    const isMatch = await user.comparePassword(currentPassword);
-    if (!isMatch) {
-      res.status(400).json({ message: "رمز فعلی اشتباه است." });
-      return;
-    }
-
-    // تنظیم و هش رمز جدید
-    user.password = newPassword;
-    await user.save();
-
-    res.status(200).json({ message: "رمز عبور با موفقیت تغییر کرد." });
-  } catch (error: any) {
-    res.status(500).json({ message: error.message });
-  }
-};
+  };
 
 // بروزرسانی اطلاعات کاربر
 export const updateProfile = async (
@@ -184,41 +188,55 @@ export const refreshToken = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { token } = req.body;
+    const { refreshToken: token } = req.body;
     if (!token) {
       res.status(401).json({ message: "رفرش توکن ارسال نشده." });
       return;
     }
 
-    jwt.verify(
-      token,
-      process.env.JWT_REFRESH_SECRET!,
-      (err: any, decoded: any) => {
-        if (err) {
-          res.status(403).json({ message: "توکن نامعتبر یا منقضی شده." });
-          return;
-        }
+    const isBlacklisted = await TokenBlackList.findOne({ token });
+    if (isBlacklisted) {
+      res.status(403).json({ message: "این توکن معتبر نیست (Logout شده)." });
+      return;
+    }
 
-        const newTokens = generateTokens(decoded.id);
-        res.status(200).json(newTokens);
-      }
-    );
+jwt.verify(token, process.env.JWT_REFRESH_SECRET!, (err: Error | null, decoded: any) => {
+  if (err instanceof Error) {
+    console.error(err); // مناسب برای trace واقعی
+    return res.status(403).json({ message: "توکن نامعتبر یا منقضی شده.", error: err.message });
+  }
+  if (!decoded?.id) {
+    return res.status(403).json({ message: "ساختار توکن صحیح نیست." });
+  }
+  const newTokens = generateTokens(decoded.id);
+  res.status(200).json(newTokens);
+});
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
 };
 
+///////////////////////////////// LOGOUT ///////////////////////////////////////////////
 
-
-export const logOut= async(req: Request, res: Response): Promise<void> => {
-  try{
-    const {Token} = req.body;
-    if(!token){
+export const logOut = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { refreshToken: token } = req.body;
+    if (!token) {
       res.status(400).json({ message: "توکن ارسال نشده." });
       return;
     }
 
-    const decoded:any = jwt.verify(token, process.env.JWT_REFRESH_SECRET!);
+    const decoded: any = jwt.verify(token, process.env.JWT_REFRESH_SECRET!);
+
+      const existingToken = await TokenBlackList.findOne({ token });
+    if (existingToken) {
+      // اگر قبلاً ثبت شده، ولی منقضی نشده، نیازی به ذخیره دوباره نیست
+      res.status(200).json({
+        message: "این توکن قبلاً Logout شده بود.",
+      });
+      return;
+    }
+
     await TokenBlackList.create({
       token,
       userId: decoded.id,
@@ -226,8 +244,7 @@ export const logOut= async(req: Request, res: Response): Promise<void> => {
     });
 
     res.status(200).json({ message: "خروج با موفقیت انجام شد." });
-  }catch (error: any) {
-     res.status(500).json({ message: error.message });
-
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
   }
-}
+};
