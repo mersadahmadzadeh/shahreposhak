@@ -116,6 +116,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
         return;
       }
 
+      
       // بررسی رمز فعلی
       const isMatch = await user.comparePassword(currentPassword);
       if (!isMatch) {
