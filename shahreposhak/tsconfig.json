@@ -13,6 +13,6 @@
     "allowImportingTsExtensions": true,
     "noEmit": true
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*", "src/routes/server.ts"],
   "exclude": ["node_modules"]
 }
